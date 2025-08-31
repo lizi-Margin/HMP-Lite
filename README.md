@@ -1,7 +1,7 @@
 
 # HMP-Lite: Hybrid Multi-agent Playground Lite
 
-HMP-Lite是多智能体强化学习平台[HMAP](https://github.com/binary-husky/hmp2g)的精简版本，在保留其最核心的配置文件注入系统和解耦能力极强的总体架构的同时，做了如下简化：
+HMP-Lite是多智能体强化学习平台[HMAP](https://github.com/binary-husky/hmp2g)的精简版本，在保留其解耦能力极强的总体架构和配置文件注入系统的同时，做了如下简化：
 1. 大幅缩减配置项数量，取消ChainVar，减小环境开发者(我)check配置项的压力
 2. 取消AsUnity系列配置（ObsAsUnity等），这些逻辑不必由平台实现(感觉用不到)
 3. 观察/动作空间完全在ScenarioConfig中定义，而不通过参数传递给算法，提升了环境<->算法交互的灵活性
