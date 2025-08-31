@@ -1,4 +1,21 @@
 
+# HMP-Lite: Hybrid Multi-agent Playground Lite
+
+HMP-Lite是binary-husky/hmp2g的简化版本，在保留其最核心的配置文件注入系统和解耦能力极强的总体架构的同时，做了如下简化：
+1. 大幅缩减配置项数量，取消ChainVar，减小环境开发者(我)check配置项的压力
+2. 取消AsUnity系列配置（ObsAsUnity等），这些逻辑不必由平台实现(感觉用不到)
+3. 观察/动作空间完全在ScenarioConfig中定义，而不通过参数传递给算法，提升了环境<->算法交互的灵活性
+4. 只保留必须使用的代码
+
+TODO: 更多环境和算法!
+
+
+就写这么多，反正也没人用。
+
+
+原作者连接: https://github.com/binary-husky/hmp2g
+
+
 # HMAP：Hybrid Multi-Agent Playground
 [![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/binary-husky/hmp2g/issues)
 [![Docker Pulls](https://img.shields.io/docker/pulls/fuqingxu/hmp.svg?maxAge=2592000)](https://registry.hub.docker.com/r/fuqingxu/hmp)

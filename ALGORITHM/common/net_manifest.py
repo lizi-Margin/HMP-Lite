@@ -37,6 +37,10 @@ def weights_init(m):
         'HyperNet':None,
         'MyHyperNet':None,
         'DivTree':None,
+        'Identity': None,  # 添加这一行，用来处理 Identity 类型
+        'KaleiLinear': None,
+        'LayerNorm': None,
+        'Kalei_MLP': None
     }
 
     classname = m.__class__.__name__

@@ -1,0 +1,45 @@
+{
+    // config HMP core
+    "config.py->GlobalConfig": {
+        "env_name": "lag", // *** the selection of MISSION
+        "logdir": "RESULT/lag-ppo_ma_lag-2v2",
+        "seed": 1111,
+        "num_threads": 12,
+        "fold": 1,
+        "report_reward_interval": 6,
+        "max_n_episode": 500000
+    },
+
+    // config MISSION
+    "MISSION.lag.env_wrapper.py->ScenarioConfig": {  // *** must kiss with "env_name"
+        "AGENT_ID_EACH_TEAM": [[0, 1], [2, 3]],
+        "render": true,
+        "MaxEpisodeStep": 800,
+        "TEAM_NAMES": [
+           "ALGORITHM.ppo_ma_lag.foundation->ReinforceAlgorithmFoundation",
+           "ALGORITHM.random.foundation->RandomController"
+        ]
+    },
+
+    // --- config ALGORITHM 1/2 --- 
+    "ALGORITHM.ppo_ma_lag.foundation.py->AlgorithmConfig": { // must kiss with "TEAM_NAMES"
+        "train_traj_needed": 64,
+        "use_normalization": true,
+        "load_checkpoint": false,
+        // "load_specific_checkpoint": "",
+        "gamma": 0.99,
+        "lr": 3e-4,
+        "entropy_coef": 0.0001,
+        "ppo_epoch": 16,
+
+        "device": "cuda"
+    },
+    "uhtk.UTIL.tensor_ops.py->ConfigCache": {
+        "device_to_config": "cuda"
+    },
+
+
+    // --- config ALGORITHM 2/2 --- 
+    "ALGORITHM.random.foundation.py->AlgorithmConfig": {
+    }
+}

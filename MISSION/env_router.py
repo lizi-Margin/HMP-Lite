@@ -1,117 +1,219 @@
 import_path_ref = {
-    "collective_assault": ("MISSION.collective_assault.collective_assault_parallel_run",        'ScenarioConfig'),
-    "dca_multiteam": ("MISSION.dca_multiteam.collective_assault_parallel_run",                  'ScenarioConfig'),
-    "dca": ("MISSION.dca.collective_assault_parallel_run", 'ScenarioConfig'),
-    "air_fight": ("MISSION.air_fight.environment.air_fight_compat",                            'ScenarioConfig'),
     "native_gym": ("MISSION.native_gym.native_gym_config",                                     'ScenarioConfig'),
     "starcraft2": ("MISSION.starcraft.sc2_env_wrapper",                                        'ScenarioConfig'),
-    "sc2": ("MISSION.starcraft.sc2_env_wrapper",                                               'ScenarioConfig'),
-    "unity_game": ("MISSION.unity_game.unity_game_wrapper",                                    'ScenarioConfig'),
-    "sr_tasks->cargo": ("MISSION.sr_tasks.multiagent.scenarios.cargo",                         'ScenarioConfig'),
-    "sr_tasks->hunter_invader": ("MISSION.sr_tasks.multiagent.scenarios.hunter_invader",       'ScenarioConfig'),
-    "sr_tasks->hunter_invader3d": ("MISSION.sr_tasks.multiagent.scenarios.hunter_invader3d",   'ScenarioConfig'),
-    "sr_tasks->hunter_invader3d_v2": ("MISSION.sr_tasks.multiagent.scenarios.hunter_invader3d_v2",'ScenarioConfig'),
-    "bvr": ("MISSION.bvr_sim.init_env",                                                        'ScenarioConfig'),
-    "mathgame": ("MISSION.math_game.env",                                                      'ScenarioConfig'),
-    "uhmap": ("MISSION.uhmap.uhmap_env_wrapper",                                               'ScenarioConfig'),
-    "llm_trainer": ("MISSION.llm_trainer.llm_env",                                             'ScenarioConfig'),
+    "hdb": ("MISSION.hdb.hdb_env_wrapper",                                                     'ScenarioConfig'), 
+    "lag": ("MISSION.lag.env_wrapper",                                                         'ScenarioConfig'),
 }
 
 env_init_function_ref = {
-    "collective_assault": ("MISSION.collective_assault.collective_assault_parallel_run",          'make_collective_assault_env'),
-    "dca_multiteam": ("MISSION.dca_multiteam.collective_assault_parallel_run",                  'make_collective_assault_env'),
-    "dca": ("MISSION.dca.collective_assault_parallel_run", 'make_collective_assault_env'),
-    "air_fight": ("MISSION.air_fight.environment.air_fight_compat",                            'make_air_fight_env'),
     "native_gym": ("MISSION.native_gym.native_gym_config",                                     'env_init_function'),
     "starcraft2": ("MISSION.starcraft.sc2_env_wrapper",                                        'make_sc2_env'),
-    "sc2": ("MISSION.starcraft.sc2_env_wrapper",                                               'make_sc2_env'),
-    "unity_game": ("MISSION.unity_game.unity_game_wrapper",                                    'make_env'),
-    "sr_tasks": ("MISSION.sr_tasks.multiagent.scenario",                                       'sr_tasks_env'),
-    "bvr": ("MISSION.bvr_sim.init_env",                                                        'make_bvr_env'),
-    "mathgame": ("MISSION.math_game.env",                                                      'make_math_env'),
-    "uhmap": ("MISSION.uhmap.uhmap_env_wrapper",                                               'make_uhmap_env'),
-    "llm_trainer": ("MISSION.llm_trainer.llm_env",                                             'make_llm_env'),
+    "hdb": ("MISSION.hdb.hdb_env_wrapper",                                                     'make_hdb_env'),
+    "lag": ("MISSION.lag.env_wrapper",                                                         'make_env'),
 }
 
 ##################################################################################################################################
 ##################################################################################################################################
-from config import GlobalConfig
-import importlib, os
-from UTIL.colorful import print亮蓝
+
+import atexit
+import importlib
+import numpy as np
+from uhtk.siri.utils.lprint import lprint
+from uhtk.UTIL.colorful import print亮红
+from uhtk.siri.utils.lprint import lprint_
 
 
 
-def load_ScenarioConfig():
-    if GlobalConfig.env_name not in import_path_ref:
+# ------------------ functional utility ------------------ #
+def load_ScenarioConfig(env_name):
+    if env_name not in import_path_ref:
         assert False, ('need to find path of ScenarioConfig')
-    import_path, ScenarioConfig = import_path_ref[GlobalConfig.env_name]
-    GlobalConfig.ScenarioConfig = getattr(importlib.import_module(import_path), ScenarioConfig)
+    import_path, ScenarioConfig = import_path_ref[env_name]
+    ScenarioConfig = getattr(importlib.import_module(import_path), ScenarioConfig)
+    return ScenarioConfig
 
 
+# ------------------ main process ------------------ #
+def make_parallel_envs(marker=''):
+    from config import GlobalConfig
+    from COMMUNICATION.shm_pool import SmartPool
+
+    # init remote process first
+    assert (GlobalConfig.num_threads % GlobalConfig.fold) == 0, ('Use n process to run n*m parallel threads!')
+    smart_pool = SmartPool(
+        fold=GlobalConfig.fold,
+        proc_num=GlobalConfig.num_threads // GlobalConfig.fold,
+        base_seed=GlobalConfig.seed
+    )
+    atexit.register(smart_pool.party_over)  # failsafe, handles shm leak
+    
+    # init 
+    GlobalConfig.ScenarioConfig = load_ScenarioConfig(GlobalConfig.env_name)
+    
+    env_args_dict_list = [({
+        'env_name':GlobalConfig.env_name, 
+        'proc_index':i if ('test' not in marker) else -(i+1), 
+        'marker':marker
+    },) for i in range(GlobalConfig.num_threads)]
+    envs = SuperpoolEnv(smart_pool, env_args_dict_list)
+
+    return envs
+
+class SuperpoolEnv(object):
+    def __init__(self, process_pool, env_args_dict_list):
+        self.SuperPool = process_pool
+        self.num_envs = len(env_args_dict_list)
+        self.env_name_marker = env_args_dict_list[0][0]['marker']
+        self.env = 'env' + self.env_name_marker
+        self.SuperPool.add_target(name=self.env, lam=EnvAutoReset, args_list=env_args_dict_list)
+        # try:
+        #     self.observation_space = self.SuperPool.exec_target(name=self.env, dowhat='get_obs_space')[0]
+        #     self.action_space =      self.SuperPool.exec_target(name=self.env, dowhat='get_act_space')[0]
+        # except:
+        #     print亮红(lprint_(self, 'Gym Space is unable to transfer between processes, using string instead'))
+        #     self.observation_space = self.SuperPool.exec_target(name=self.env, dowhat='get_obs_space_str')[0]
+        #     self.action_space =      self.SuperPool.exec_target(name=self.env, dowhat='get_act_space_str')[0]
+
+    # def get_space(self):
+    #     return {'obs_space': self.observation_space, 'act_space': self.action_space}
+
+    def step(self, actions):
+        # ENV_PAUSE = [np.isnan(thread_act).any() for thread_act in actions]
+        results = self.SuperPool.exec_target(name=self.env, dowhat='step', args_list=actions)
+        obs, rews, dones, infos = zip(*results)
+
+        try:
+            return np.stack(obs), np.stack(rews), np.stack(dones), np.stack(infos)
+        except:
+            raise RuntimeError(lprint_(self, 'Unaligned obs/reward/done is illegal!'), obs, rews, dones)
+
+    def reset(self):
+        results = self.SuperPool.exec_target(name=self.env, dowhat='reset')
+        if isinstance(results[0], tuple):
+            # some envs like starcraft and unreal-hmp return (ob, info) tuple at reset, deal with it
+            obs, infos = zip(*results)
+            return np.stack(obs), np.stack(infos)
+        else:
+            # but other rather simple env like MAPE only return ob
+            return np.stack(results)
+
+
+
+# ------------------ remote process ------------------ #
 def make_env_function(env_name, rank):
-    load_ScenarioConfig()
-    ref_env_name = env_name
+    from config import GlobalConfig
+    assert env_name == GlobalConfig.env_name, "WTF, remote process GlobalConfig.env_name is fucked up"
+    GlobalConfig.ScenarioConfig = load_ScenarioConfig(env_name)
 
-    if 'native_gym' in env_name:
-        assert '->' in env_name
-        ref_env_name, env_name = env_name.split('->')
-    elif 'sr_tasks' in env_name:
-        assert '->' in env_name
-        ref_env_name, env_name = env_name.split('->')
-
-    import_path, func_name = env_init_function_ref[ref_env_name]
+    import_path, func_name = env_init_function_ref[env_name]
     env_init_function = getattr(importlib.import_module(import_path), func_name)
     return lambda: env_init_function(env_name, rank)
 
 
+# This class execute in child process
+class EnvAutoReset(object):
+    def __init__(self, env_args_dict):
+        env_name = env_args_dict['env_name']
+        proc_index = env_args_dict['proc_index']
+        env_init_fn = make_env_function(env_name=env_name, rank=proc_index)
+        # finally the env is initialized
+        self._env = env_init_fn()
+        self._cold_start = True
+        self._suffer_reset = False
+        # # get the space of env
+        # self.observation_space = self._env.observation_space
+        # self.action_space = self._env.action_space
+        self._step_cache = None
+        self._reset_cache = None
 
-def make_parallel_envs(process_pool, marker=''):
-    from UTIL.shm_env import SuperpoolEnv
-    from config import GlobalConfig
-    from MISSION.env_router import load_ScenarioConfig
-    load_ScenarioConfig()
-    
-    env_args_dict_list = [({
-        'env_name':GlobalConfig.env_name, 
-        'proc_index':i if 'test' not in marker else -(i+1), 
-        'marker':marker
-    },) for i in range(GlobalConfig.num_threads)]
+    def step(self, act):
+        # If we receive a skip step command, 
+        # we skip by returning previous obs from cache 
+        # (as an echo from the previous episode)
+        if np.isnan(act).any():  
+            # If any of the act is NaN, we take it as a skip command
+            assert self._suffer_reset
+            assert self._step_cache is not None
+            return self._step_cache
+        
+        # other wise, we step
+        ob, reward, done, info = self._env.step(act)
+        # avoid returning list as observation matrix
+        assert isinstance(ob, np.ndarray), "Everything should be np.ndarray, except info"
+        
+        if np.any(done):
+            # # If the environment is terminated after step
+            # # (1), put terminal obs into 'info'
+            # if info is None:
+            #     info = {'obs-echo':ob}
+            # else:
+            #     assert isinstance(info, dict), ('Info must be a python dictionary')
+            #     info.update({'obs-echo': ob.copy()})
 
-    if GlobalConfig.env_name == 'air_fight':
-        # This particular env has a dll file 
-        # that must be loaded in main process
-        # 艹tmd有个dll必须在主进程加载
-        from MISSION.air_fight.environment.pytransform import pyarmor_runtime
-        pyarmor_runtime()
+            # (2), automatically reset env
+            ob = self._reset_cache = self._real_reset()
+            if isinstance(ob, tuple): ob = ob[0]  # (ob, info,)
+        else:
+            self._suffer_reset = False
+            self._reset_cache = None
+            
+        # preserve an echo here will be use to handle unexpected env pause
+        self._step_cache = [ob, reward, done, info]
+        # give everything back to main process
+        return (ob, reward, done, info)
 
-    if GlobalConfig.env_name == 'bvr':
-        # 1、如果没用hmp的docker，请设置好 YOUR_ROOT_PASSWORD，不止这一处，请全局搜索"YOUR_ROOT_PASSWORD"替换所有
-        # 2、用docker的sock挂载到容器中，方法在SetupDocker.md中
-        print亮蓝('[env_router]: here goes the docker in docker check.')
-        YOUR_ROOT_PASSWORD = 'clara'  # the sudo password
-        os.system("echo %s|sudo -S date"%YOUR_ROOT_PASSWORD) # get sudo power
-        res = os.popen("sudo docker ps").read()
-        if "CONTAINER ID" not in res:
-            print亮蓝('[env_router]: Error checking docker in docker, can not control host docker interface!')
-            raise "Error checking docker in docker, can not control host docker interface!"
-        pass
+    # def dict_update(self, info, info_reset):
+    #     for key in info_reset:
+    #         if key in info: info[key+'-echo'] = info.pop(key)
+    #     info.update(info_reset)
+    #     return info
 
-    if GlobalConfig.env_name == 'dca':
-        # This particular env has a cython file that needs to be compiled in main process
-        # that must be loaded in main process
-        from MISSION.dca.cython_func import laser_hit_improve3
-    if GlobalConfig.env_name == 'dca_multiteam':
-        # This particular env has a cython file that needs to be compiled in main process
-        # that must be loaded in main process
-        from MISSION.dca_multiteam.cython_func import laser_hit_improve3
-    if GlobalConfig.env_name == 'uhmap':
-        # This particular env has a cython file that needs to be compiled in main process
-        # that must be loaded in main process
-        from MISSION.uhmap.SubTasks.cython_func import tear_number_apart
-    
-    if GlobalConfig.num_threads > 1:
-        envs = SuperpoolEnv(process_pool, env_args_dict_list)
-    else:
-        envs = SuperpoolEnv(process_pool, env_args_dict_list)
+    def reset(self):
+        if self._cold_start:
+            # this is the first time that this env thread gets reset.
+            self._cold_start = False
+            return self._real_reset()
+        elif self._suffer_reset:
+            # we have already reset previously, avoid doing that again by returning cache
+            assert self._reset_cache is not None
+            return self._reset_cache
+        else:
+            lprint(self, 'We do not recommand resetting manually.')
+            return self._real_reset()
 
-    return envs
+    def _real_reset(self):
+        self._suffer_reset = True
+        res = self._env.reset()
+        if isinstance(res, tuple):
+            assert len(res) == 2
+            ob, info = res
+        else: ob = res
+        assert isinstance(ob, np.ndarray), "Everything should be np.ndarray, except info"
+        return res
+
+    # def sleep(self):
+    #     return self._env.sleep()
+
+    def render(self):
+        return self._env.render()
+
+    def close(self):
+        return None
+
+    # def get_act_space(self):
+    #     return self.action_space
+
+    # def get_obs_space(self):
+    #     return self.observation_space
+
+    # def get_act_space_str(self):
+    #     return str(self.action_space)
+
+    # def get_obs_space_str(self):
+    #     return str(self.observation_space)
+
+    def __del__(self):
+        if hasattr(self,'env'): 
+            del self._env
+
+
